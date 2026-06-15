@@ -1,0 +1,23 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Prezzi PSV del mese",
+        "description": "Configura l'ora di aggiornamento giornaliero dei prezzi gas dal GME.",
+        "data": { "scan_hour": "Ora di aggiornamento (0-23)" },
+        "data_description": { "scan_hour": "Scegli un orario ≥ 19 per avere il dato definitivo della giornata." }
+      }
+    },
+    "abort": { "single_instance_allowed": "È già configurata un'istanza di Prezzi PSV del mese." },
+    "error": { "invalid_hour": "L'ora deve essere compresa tra 0 e 23." }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opzioni PSV Sensor",
+        "data": { "scan_hour": "Ora di aggiornamento (0-23)" }
+      }
+    },
+    "error": { "invalid_hour": "L'ora deve essere compresa tra 0 e 23." }
+  }
+}
