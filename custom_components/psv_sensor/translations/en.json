@@ -1,0 +1,23 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "PSV Monthly Gas Prices",
+        "description": "Configure the daily update time for gas prices from GME.",
+        "data": { "scan_hour": "Update hour (0-23)" },
+        "data_description": { "scan_hour": "Choose >= 19 to get the definitive daily value." }
+      }
+    },
+    "abort": { "single_instance_allowed": "Only one instance of PSV Monthly Gas Prices is allowed." },
+    "error": { "invalid_hour": "Hour must be between 0 and 23." }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "PSV Sensor Options",
+        "data": { "scan_hour": "Update hour (0-23)" }
+      }
+    },
+    "error": { "invalid_hour": "Hour must be between 0 and 23." }
+  }
+}
