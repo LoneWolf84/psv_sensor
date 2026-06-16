@@ -16,10 +16,25 @@ from .const import DOMAIN, GME_IGI_URL, MWH_TO_SMC, RETRY_MINUTES
 _LOGGER = logging.getLogger(__name__)
 
 HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
+
+# User-Agent da browser reale: il sito GME è dietro un firewall applicativo
+# che blocca user-agent non riconosciuti come browser.
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
+REFERER_PAGE_URL = (
+    "https://www.mercatoelettrico.org"
+    "/it-it/Home/Pubblicazioni/Indici-GME/IGIndexGmeEsiti"
+)
+
 HTTP_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; HomeAssistant PSV Sensor)",
-    "Accept": "application/json",
-    "Referer": "https://www.mercatoelettrico.org/it-it/Home/Pubblicazioni/Indici-GME/IGIndexGmeEsiti",
+    "User-Agent": BROWSER_USER_AGENT,
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
+    "Referer": REFERER_PAGE_URL,
+    "X-Requested-With": "XMLHttpRequest",
 }
 
 
@@ -84,9 +99,36 @@ class PsvDataCoordinator(DataUpdateCoordinator[PsvData]):
             raise UpdateFailed(f"Impossibile scaricare dati IGI: {err}") from err
 
     async def _fetch_and_compute(self, now: datetime) -> PsvData:
-        """Scarica il JSON dal GME e calcola i sensori."""
+        """Scarica il JSON dal GME e calcola i sensori.
+
+        Il sito GME richiede una sessione valida: visitiamo prima la pagina
+        HTML (come fa un browser) per ottenere i cookie, poi chiamiamo l'API.
+        Senza questo step l'API risponde HTTP 401.
+        """
         async with aiohttp.ClientSession() as session:
-            async with session.get(GME_IGI_URL, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT) as resp:
+            # Step 1: visita la pagina per ottenere i cookie di sessione
+            async with session.get(
+                REFERER_PAGE_URL,
+                headers={"User-Agent": BROWSER_USER_AGENT},
+                timeout=HTTP_TIMEOUT,
+            ) as page_resp:
+                if page_resp.status != 200:
+                    _LOGGER.debug(
+                        "Visita pagina GME ha restituito HTTP %s (continuo comunque)",
+                        page_resp.status,
+                    )
+                # Consuma il body per liberare la connessione
+                await page_resp.read()
+
+            # Step 2: chiama l'API con i cookie ora presenti nella sessione
+            async with session.get(
+                GME_IGI_URL, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT
+            ) as resp:
+                if resp.status == 401:
+                    raise aiohttp.ClientError(
+                        "HTTP 401: sessione non valida. Il GME potrebbe aver "
+                        "cambiato il meccanismo di autenticazione lato sito."
+                    )
                 if resp.status != 200:
                     raise aiohttp.ClientError(f"HTTP {resp.status}")
                 records: list[dict] = await resp.json(content_type=None)
@@ -122,3 +164,4 @@ class PsvDataCoordinator(DataUpdateCoordinator[PsvData]):
 
         data.ultimo_aggiornamento = now
         return data
+
