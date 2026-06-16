@@ -23,7 +23,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 
 class PsvBaseSensor(CoordinatorEntity[PsvDataCoordinator], SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_has_entity_name = True
+    # has_entity_name = False: l'entity_id si basa solo sul nome del sensore,
+    # senza il prefisso del nome del device (es. "prezzi_psv_del_mese_").
+    _attr_has_entity_name = False
 
     def __init__(self, coordinator, config_entry, unique_suffix):
         super().__init__(coordinator)
