@@ -28,8 +28,13 @@ class PsvSensorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return PsvSensorOptionsFlow(config_entry)
 
 class PsvSensorOptionsFlow(config_entries.OptionsFlow):
-    def __init__(self, config_entry):
-        self.config_entry = config_entry
+    """Gestisce le opzioni modificabili dopo l'installazione.
+
+    NOTA: non definiamo __init__ con self.config_entry = config_entry.
+    Nelle versioni recenti di Home Assistant, OptionsFlow espone già
+    `config_entry` come property popolata automaticamente dal framework;
+    sovrascriverla qui causa AttributeError perché la property non ha setter.
+    """
 
     async def async_step_init(self, user_input=None) -> FlowResult:
         errors = {}
