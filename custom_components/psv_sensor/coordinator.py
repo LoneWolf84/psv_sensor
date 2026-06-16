@@ -1,9 +1,14 @@
 """Coordinator per PSV Sensor: scarica i prezzi IGI dal GME.
 
 Il sito GME (basato su DNN/ASP.NET) protegge l'endpoint dati con un
-meccanismo anti-forgery: la pagina HTML imposta un cookie
-`__RequestVerificationToken` e lo stesso valore deve essere rispedito
-come header `RequestVerificationToken` nella chiamata successiva.
+meccanismo anti-forgery in due parti distinte:
+  1. Un cookie `__RequestVerificationToken`, fisso per la sessione del
+     browser (gestito automaticamente da aiohttp tramite la CookieJar).
+  2. Un valore HTML nascosto, presente nella pagina come
+     <input name="__RequestVerificationToken" type="hidden" value="...">,
+     DIVERSO dal cookie e che il sito si aspetta di ricevere come header
+     `RequestVerificationToken` in ogni chiamata API. Questo valore cambia
+     ad ogni caricamento della pagina (token single-use).
 Servono inoltre gli header custom `ModuleId` e `TabId`, fissi per la
 pagina IGIndexGmeEsiti.
 """
@@ -11,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta
 from statistics import mean
 
@@ -38,8 +44,11 @@ BROWSER_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
-# Nome del cookie anti-forgery impostato dalla pagina GME
-TOKEN_COOKIE_NAME = "__RequestVerificationToken"
+# Regex per estrarre il token dal campo hidden della pagina HTML:
+# <input name="__RequestVerificationToken" type="hidden" value="XXXX" />
+TOKEN_INPUT_PATTERN = re.compile(
+    r'name="__RequestVerificationToken"[^>]*value="([^"]+)"'
+)
 
 
 class PsvData:
@@ -103,32 +112,34 @@ class PsvDataCoordinator(DataUpdateCoordinator[PsvData]):
             raise UpdateFailed(f"Impossibile scaricare dati IGI: {err}") from err
 
     async def _get_verification_token(self, session: aiohttp.ClientSession) -> str:
-        """Visita la pagina GME e restituisce il valore del cookie anti-forgery.
+        """Visita la pagina GME e restituisce il token anti-forgery dal body HTML.
 
-        Il cookie viene impostato automaticamente nella CookieJar della
-        sessione aiohttp; lo leggiamo da lì per poterlo rispedire anche
-        come header (richiesto dal sito, oltre al cookie stesso).
+        Il token corretto da usare come header NON è il cookie
+        `__RequestVerificationToken` (che resta fisso per sessione), ma il
+        valore presente nel campo nascosto della pagina:
+        <input name="__RequestVerificationToken" type="hidden" value="...">
+        Questo valore cambia ad ogni caricamento della pagina.
+        Il cookie viene comunque salvato automaticamente nella sessione
+        aiohttp e va comunque inviato insieme alla richiesta API.
         """
         async with session.get(
             GME_PAGE_URL,
             headers={"User-Agent": BROWSER_USER_AGENT},
             timeout=HTTP_TIMEOUT,
         ) as resp:
-            await resp.read()  # consuma il body, i cookie sono già stati salvati
             if resp.status != 200:
                 _LOGGER.debug(
                     "Visita pagina GME ha restituito HTTP %s", resp.status
                 )
+            body = await resp.text()
 
-        # Cerca il cookie nella jar della sessione (per il dominio gme.mercatoelettrico.org)
-        for cookie in session.cookie_jar:
-            if cookie.key == TOKEN_COOKIE_NAME:
-                return cookie.value
-
-        raise aiohttp.ClientError(
-            f"Cookie '{TOKEN_COOKIE_NAME}' non trovato dopo la visita alla pagina GME. "
-            "Il meccanismo di sicurezza del sito potrebbe essere cambiato."
-        )
+        match = TOKEN_INPUT_PATTERN.search(body)
+        if not match:
+            raise aiohttp.ClientError(
+                "Campo __RequestVerificationToken non trovato nel body HTML "
+                "della pagina GME. Il sito potrebbe aver cambiato struttura."
+            )
+        return match.group(1)
 
     async def _fetch_and_compute(self, now: datetime) -> PsvData:
         """Scarica il JSON dal GME e calcola i sensori."""
