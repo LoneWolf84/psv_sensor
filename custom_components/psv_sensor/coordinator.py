@@ -1,4 +1,12 @@
-"""Coordinator per PSV Sensor: scarica i prezzi IGI dal GME (endpoint pubblico)."""
+"""Coordinator per PSV Sensor: scarica i prezzi IGI dal GME.
+
+Il sito GME (basato su DNN/ASP.NET) protegge l'endpoint dati con un
+meccanismo anti-forgery: la pagina HTML imposta un cookie
+`__RequestVerificationToken` e lo stesso valore deve essere rispedito
+come header `RequestVerificationToken` nella chiamata successiva.
+Servono inoltre gli header custom `ModuleId` e `TabId`, fissi per la
+pagina IGIndexGmeEsiti.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -11,31 +19,27 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 import homeassistant.util.dt as dt_util
 
-from .const import DOMAIN, GME_IGI_URL, MWH_TO_SMC, RETRY_MINUTES
+from .const import (
+    DOMAIN,
+    GME_IGI_URL,
+    GME_MODULE_ID,
+    GME_PAGE_URL,
+    GME_TAB_ID,
+    MWH_TO_SMC,
+    RETRY_MINUTES,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
 
-# User-Agent da browser reale: il sito GME è dietro un firewall applicativo
-# che blocca user-agent non riconosciuti come browser.
 BROWSER_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
-REFERER_PAGE_URL = (
-    "https://www.mercatoelettrico.org"
-    "/it-it/Home/Pubblicazioni/Indici-GME/IGIndexGmeEsiti"
-)
-
-HTTP_HEADERS = {
-    "User-Agent": BROWSER_USER_AGENT,
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
-    "Referer": REFERER_PAGE_URL,
-    "X-Requested-With": "XMLHttpRequest",
-}
+# Nome del cookie anti-forgery impostato dalla pagina GME
+TOKEN_COOKIE_NAME = "__RequestVerificationToken"
 
 
 class PsvData:
@@ -98,36 +102,59 @@ class PsvDataCoordinator(DataUpdateCoordinator[PsvData]):
                 return self.data
             raise UpdateFailed(f"Impossibile scaricare dati IGI: {err}") from err
 
-    async def _fetch_and_compute(self, now: datetime) -> PsvData:
-        """Scarica il JSON dal GME e calcola i sensori.
+    async def _get_verification_token(self, session: aiohttp.ClientSession) -> str:
+        """Visita la pagina GME e restituisce il valore del cookie anti-forgery.
 
-        Il sito GME richiede una sessione valida: visitiamo prima la pagina
-        HTML (come fa un browser) per ottenere i cookie, poi chiamiamo l'API.
-        Senza questo step l'API risponde HTTP 401.
+        Il cookie viene impostato automaticamente nella CookieJar della
+        sessione aiohttp; lo leggiamo da lì per poterlo rispedire anche
+        come header (richiesto dal sito, oltre al cookie stesso).
         """
-        async with aiohttp.ClientSession() as session:
-            # Step 1: visita la pagina per ottenere i cookie di sessione
-            async with session.get(
-                REFERER_PAGE_URL,
-                headers={"User-Agent": BROWSER_USER_AGENT},
-                timeout=HTTP_TIMEOUT,
-            ) as page_resp:
-                if page_resp.status != 200:
-                    _LOGGER.debug(
-                        "Visita pagina GME ha restituito HTTP %s (continuo comunque)",
-                        page_resp.status,
-                    )
-                # Consuma il body per liberare la connessione
-                await page_resp.read()
+        async with session.get(
+            GME_PAGE_URL,
+            headers={"User-Agent": BROWSER_USER_AGENT},
+            timeout=HTTP_TIMEOUT,
+        ) as resp:
+            await resp.read()  # consuma il body, i cookie sono già stati salvati
+            if resp.status != 200:
+                _LOGGER.debug(
+                    "Visita pagina GME ha restituito HTTP %s", resp.status
+                )
 
-            # Step 2: chiama l'API con i cookie ora presenti nella sessione
+        # Cerca il cookie nella jar della sessione (per il dominio gme.mercatoelettrico.org)
+        for cookie in session.cookie_jar:
+            if cookie.key == TOKEN_COOKIE_NAME:
+                return cookie.value
+
+        raise aiohttp.ClientError(
+            f"Cookie '{TOKEN_COOKIE_NAME}' non trovato dopo la visita alla pagina GME. "
+            "Il meccanismo di sicurezza del sito potrebbe essere cambiato."
+        )
+
+    async def _fetch_and_compute(self, now: datetime) -> PsvData:
+        """Scarica il JSON dal GME e calcola i sensori."""
+        async with aiohttp.ClientSession() as session:
+            # Step 1: visita la pagina per ottenere cookie + token anti-forgery
+            token = await self._get_verification_token(session)
+
+            # Step 2: chiama l'API con cookie (automatici) + header richiesti
+            api_headers = {
+                "User-Agent": BROWSER_USER_AGENT,
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
+                "Referer": GME_PAGE_URL,
+                "X-Requested-With": "XMLHttpRequest",
+                "ModuleId": GME_MODULE_ID,
+                "TabId": GME_TAB_ID,
+                "RequestVerificationToken": token,
+            }
+
             async with session.get(
-                GME_IGI_URL, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT
+                GME_IGI_URL, headers=api_headers, timeout=HTTP_TIMEOUT
             ) as resp:
                 if resp.status == 401:
                     raise aiohttp.ClientError(
-                        "HTTP 401: sessione non valida. Il GME potrebbe aver "
-                        "cambiato il meccanismo di autenticazione lato sito."
+                        "HTTP 401: token anti-forgery rifiutato. Il GME potrebbe "
+                        "aver cambiato ModuleId/TabId o il meccanismo di sicurezza."
                     )
                 if resp.status != 200:
                     raise aiohttp.ClientError(f"HTTP {resp.status}")
@@ -164,4 +191,3 @@ class PsvDataCoordinator(DataUpdateCoordinator[PsvData]):
 
         data.ultimo_aggiornamento = now
         return data
-
