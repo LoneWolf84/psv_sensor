@@ -23,8 +23,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 
 class PsvBaseSensor(CoordinatorEntity[PsvDataCoordinator], SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
-    # has_entity_name = False: l'entity_id si basa solo sul nome del sensore,
-    # senza il prefisso del nome del device (es. "prezzi_psv_del_mese_").
+    # has_entity_name = False: l'entity_id e il friendly_name si basano solo
+    # sul nome del sensore stesso (es. "PSV Prezzo giornaliero (€/MWh)"),
+    # senza nessun prefisso aggiuntivo.
     _attr_has_entity_name = False
 
     def __init__(self, coordinator, config_entry, unique_suffix):
@@ -32,15 +33,11 @@ class PsvBaseSensor(CoordinatorEntity[PsvDataCoordinator], SensorEntity):
         self._config_entry = config_entry
         self._attr_unique_id = f"{config_entry.entry_id}_{unique_suffix}"
 
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self._config_entry.entry_id)},
-            "name": "Prezzi PSV del mese",
-            "manufacturer": "GME – Gestore dei Mercati Energetici",
-            "model": "IG Index GME",
-            "entry_type": "service",
-        }
+    # NOTA: niente device_info qui. Raggruppare i sensori sotto un device
+    # induce Home Assistant a usare il nome del device come contesto nel
+    # calcolo dello slug iniziale dell'entity_id (es. "prezzi_psv_del_mese_"),
+    # anche con has_entity_name = False. Tenendo i 4 sensori come entità
+    # indipendenti, l'entity_id deriva esclusivamente dal nome del sensore.
 
     @property
     def available(self):
