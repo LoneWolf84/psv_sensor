@@ -1,12 +1,12 @@
 {
   "domain": "psv_sensor",
   "name": "Prezzi PSV del mese",
-  "version": "1.0.0",
+  "codeowners": ["@LoneWolf84"],
   "config_flow": true,
+  "dependencies": [],
   "documentation": "https://github.com/LoneWolf84/psv_sensor",
+  "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/LoneWolf84/psv_sensor/issues",
   "requirements": ["aiohttp>=3.9.0"],
-  "dependencies": [],
-  "codeowners": ["@LoneWolf84"],
-  "iot_class": "cloud_polling"
+  "version": "1.0.0"
 }
